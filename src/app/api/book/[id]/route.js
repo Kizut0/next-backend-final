@@ -9,12 +9,16 @@ function serializeBook(book) {
     id: book._id.toString(),
     title: book.title,
     author: book.author,
-    isbn: book.isbn,
+    isbn: book.isbn ?? "",
     category: book.category ?? "",
     publishedYear: book.publishedYear ?? null,
+    location: book.location ?? "",
+    quantity: book.totalCopies,
     totalCopies: book.totalCopies,
     availableCopies: book.availableCopies,
     status: book.status,
+    isDeleted: Boolean(book.isDeleted),
+    deletedAt: book.deletedAt ?? null,
     createdAt: book.createdAt,
     updatedAt: book.updatedAt,
   };
@@ -59,7 +63,7 @@ export async function GET(req, { params }) {
   const db = await getDb();
   const book = await db.collection("books").findOne({ _id: bookId });
 
-  if (!book) {
+  if (!book || (book.isDeleted && auth.user.role !== "ADMIN")) {
     return NextResponse.json(
       {
         message: "Book not found",
@@ -157,6 +161,10 @@ export async function PATCH(req, { params }) {
     update.category = data.category?.trim() ?? "";
   }
 
+  if (Object.hasOwn(data, "location")) {
+    update.location = data.location?.trim() ?? "";
+  }
+
   if (Object.hasOwn(data, "publishedYear")) {
     if (data.publishedYear === "" || data.publishedYear === null) {
       update.publishedYear = null;
@@ -178,19 +186,20 @@ export async function PATCH(req, { params }) {
   let nextTotalCopies = book.totalCopies;
   let nextAvailableCopies = book.availableCopies;
 
-  if (Object.hasOwn(data, "totalCopies")) {
-    const totalCopies = Number.parseInt(data.totalCopies, 10);
+  if (Object.hasOwn(data, "quantity") || Object.hasOwn(data, "totalCopies")) {
+    const quantityInput = Object.hasOwn(data, "quantity") ? data.quantity : data.totalCopies;
+    const totalCopies = Number.parseInt(quantityInput, 10);
 
     if (!Number.isInteger(totalCopies) || totalCopies < 0) {
       return NextResponse.json(
-        { message: "Total copies must be a non-negative integer" },
+        { message: "Quantity must be a non-negative integer" },
         { status: 400, headers: corsHeaders },
       );
     }
 
     if (totalCopies < borrowedCount) {
       return NextResponse.json(
-        { message: "Total copies cannot be lower than current borrowed count" },
+        { message: "Quantity cannot be lower than current borrowed count" },
         { status: 400, headers: corsHeaders },
       );
     }
@@ -278,13 +287,13 @@ export async function DELETE(req, { params }) {
   const db = await getDb();
   const activeBorrow = await db.collection("borrows").findOne({
     bookId,
-    status: "BORROWED",
+    status: { $in: ["INIT", "ACCEPTED", "BORROWED"] },
   });
 
   if (activeBorrow) {
     return NextResponse.json(
       {
-        message: "Cannot delete a book with active borrows",
+        message: "Cannot delete a book with active requests",
       },
       {
         status: 409,
@@ -293,9 +302,18 @@ export async function DELETE(req, { params }) {
     );
   }
 
-  const result = await db.collection("books").deleteOne({ _id: bookId });
+  const result = await db.collection("books").updateOne(
+    { _id: bookId, isDeleted: { $ne: true } },
+    {
+      $set: {
+        isDeleted: true,
+        deletedAt: new Date(),
+        updatedAt: new Date(),
+      },
+    },
+  );
 
-  if (!result.deletedCount) {
+  if (!result.matchedCount) {
     return NextResponse.json(
       {
         message: "Book not found",

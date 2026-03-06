@@ -8,15 +8,23 @@ function serializeBook(book) {
     id: book._id.toString(),
     title: book.title,
     author: book.author,
-    isbn: book.isbn,
+    isbn: book.isbn ?? "",
     category: book.category ?? "",
     publishedYear: book.publishedYear ?? null,
+    location: book.location ?? "",
+    quantity: book.totalCopies,
     totalCopies: book.totalCopies,
     availableCopies: book.availableCopies,
     status: book.status,
+    isDeleted: Boolean(book.isDeleted),
+    deletedAt: book.deletedAt ?? null,
     createdAt: book.createdAt,
     updatedAt: book.updatedAt,
   };
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function parseBookPayload(data, { isCreate = false } = {}) {
@@ -25,6 +33,8 @@ function parseBookPayload(data, { isCreate = false } = {}) {
   const author = data.author?.trim();
   const isbn = data.isbn?.trim();
   const category = data.category?.trim();
+  const location = data.location?.trim();
+  const quantityInput = Object.hasOwn(data, "quantity") ? data.quantity : data.totalCopies;
 
   if (isCreate || Object.hasOwn(data, "title")) {
     if (!title) {
@@ -56,6 +66,12 @@ function parseBookPayload(data, { isCreate = false } = {}) {
     payload.category = "";
   }
 
+  if (Object.hasOwn(data, "location")) {
+    payload.location = location ?? "";
+  } else if (isCreate) {
+    payload.location = "";
+  }
+
   if (Object.hasOwn(data, "publishedYear")) {
     if (data.publishedYear === "" || data.publishedYear === null) {
       payload.publishedYear = null;
@@ -72,11 +88,11 @@ function parseBookPayload(data, { isCreate = false } = {}) {
     payload.publishedYear = null;
   }
 
-  if (isCreate || Object.hasOwn(data, "totalCopies")) {
-    const totalCopies = Number.parseInt(data.totalCopies, 10);
+  if (isCreate || Object.hasOwn(data, "quantity") || Object.hasOwn(data, "totalCopies")) {
+    const totalCopies = Number.parseInt(quantityInput, 10);
 
     if (!Number.isInteger(totalCopies) || totalCopies < 0) {
-      return { error: "Total copies must be a non-negative integer" };
+      return { error: "Quantity must be a non-negative integer" };
     }
 
     payload.totalCopies = totalCopies;
@@ -102,14 +118,12 @@ export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const q = searchParams.get("q")?.trim();
   const category = searchParams.get("category")?.trim();
-  const filter = {};
-  const options = {};
+  const includeDeleted = auth.user.role === "ADMIN";
+  const filter = includeDeleted ? {} : { isDeleted: { $ne: true } };
 
   if (q) {
-    filter.$text = { $search: q };
-    options.projection = {
-      score: { $meta: "textScore" },
-    };
+    const pattern = new RegExp(escapeRegExp(q), "i");
+    filter.$or = [{ title: pattern }, { author: pattern }];
   }
 
   if (category) {
@@ -117,18 +131,11 @@ export async function GET(req) {
   }
 
   const db = await getDb();
-  const cursor = db.collection("books").find(filter, options);
-
-  if (q) {
-    cursor.sort({
-      score: { $meta: "textScore" },
-      createdAt: -1,
-    });
-  } else {
-    cursor.sort({ title: 1, createdAt: -1 });
-  }
-
-  const books = await cursor.toArray();
+  const books = await db
+    .collection("books")
+    .find(filter)
+    .sort({ isDeleted: 1, title: 1, createdAt: -1 })
+    .toArray();
 
   return NextResponse.json(
     {
@@ -166,6 +173,8 @@ export async function POST(req) {
     ...payload,
     availableCopies: payload.totalCopies,
     status: payload.totalCopies > 0 ? "AVAILABLE" : "UNAVAILABLE",
+    isDeleted: false,
+    deletedAt: null,
     createdAt: now,
     updatedAt: now,
   };

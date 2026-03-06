@@ -9,8 +9,10 @@ export async function ensureIndexes() {
   await Promise.all([
     users.createIndex({ username: 1 }, { unique: true }),
     users.createIndex({ email: 1 }, { unique: true }),
-    books.createIndex({ isbn: 1 }, { unique: true }),
-    books.createIndex({ title: "text", author: "text", category: "text" }),
+    books.createIndex({ isbn: 1 }, { unique: true, sparse: true }),
+    books.createIndex({ title: 1 }),
+    books.createIndex({ author: 1 }),
+    books.createIndex({ isDeleted: 1, title: 1 }),
     borrows.createIndex({ userId: 1, createdAt: -1 }),
     borrows.createIndex({ bookId: 1, status: 1 }),
   ]);
