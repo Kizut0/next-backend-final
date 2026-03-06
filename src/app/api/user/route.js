@@ -4,6 +4,8 @@ import { getDb } from "@/lib/mongodb";
 import bcrypt from "bcrypt";
 import { NextResponse } from "next/server";
 
+const ADMIN_EMAILS = new Set(["admin@test.com", "admin@gmail.com"]);
+
 export async function OPTIONS() {
   return new Response(null, {
     status: 200,
@@ -18,6 +20,7 @@ export async function POST(req) {
   const password = data.password;
   const firstname = data.firstname?.trim() ?? "";
   const lastname = data.lastname?.trim() ?? "";
+  const requestedRole = data.role?.trim()?.toUpperCase?.() ?? "";
 
   if (!username || !email || !password) {
     return NextResponse.json(
@@ -26,6 +29,18 @@ export async function POST(req) {
       },
       {
         status: 400,
+        headers: corsHeaders,
+      },
+    );
+  }
+
+  if (requestedRole === "ADMIN" && !ADMIN_EMAILS.has(email)) {
+    return NextResponse.json(
+      {
+        message: "Only admin@test.com and admin@gmail.com can register as ADMIN",
+      },
+      {
+        status: 403,
         headers: corsHeaders,
       },
     );
@@ -52,7 +67,7 @@ export async function POST(req) {
       );
     }
 
-    const role = (await users.countDocuments()) === 0 ? "ADMIN" : "MEMBER";
+    const role = ADMIN_EMAILS.has(email) ? "ADMIN" : "USER";
     const now = new Date();
     const document = {
       username,
