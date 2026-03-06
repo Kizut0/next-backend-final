@@ -1,30 +1,28 @@
-// REFERENCE: This file is provided as a user registration example.
-// Students must implement authentication and role-based logic as required in the exam.
+import { requireAuth } from "@/lib/auth";
 import corsHeaders from "@/lib/cors";
-import { getClientPromise } from "@/lib/mongodb";
 import { NextResponse } from "next/server";
 
-export async function OPTIONS(req) {
+export async function OPTIONS() {
   return new Response(null, {
     status: 200,
     headers: corsHeaders,
   });
 }
 
-export async function GET (req) {
+export async function GET(req) {
+  const auth = await requireAuth(req);
 
-  try {
-    const client = await getClientPromise();
-    const db = client.db("<your-database>");
-    const email = user.email;
-    const profile = await db.collection("<user-collection>").findOne({ email });
-    return NextResponse.json(profile, {
-      headers: corsHeaders
-    })
+  if (!auth.ok) {
+    return auth.response;
   }
-  catch(error) {
-    return NextResponse.json(error.toString(), {
-      headers: corsHeaders
-    })
-  }
+
+  return NextResponse.json(
+    {
+      user: auth.user,
+    },
+    {
+      status: 200,
+      headers: corsHeaders,
+    },
+  );
 }

@@ -25,5 +25,8 @@ export async function GET(request) {
   }
 
   const result = await ensureIndexes();
-  return NextResponse.json({ message: "Indexes ensured" });
+  return NextResponse.json({
+    message: "Indexes ensured",
+    result,
+  });
 }

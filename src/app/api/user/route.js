@@ -1,63 +1,108 @@
-
-// REFERENCE: This file is provided as a user registration example.
-// Students must implement authentication and role-based logic as required in the exam.
 import corsHeaders from "@/lib/cors";
-import { getClientPromise } from "@/lib/mongodb";
+import { sanitizeUser } from "@/lib/auth";
+import { getDb } from "@/lib/mongodb";
 import bcrypt from "bcrypt";
 import { NextResponse } from "next/server";
 
-export async function  POST (req) {
+export async function OPTIONS() {
+  return new Response(null, {
+    status: 200,
+    headers: corsHeaders,
+  });
+}
+
+export async function POST(req) {
   const data = await req.json();
-  const username = data.username;
-  const email = data.email;
+  const username = data.username?.trim();
+  const email = data.email?.trim().toLowerCase();
   const password = data.password;
-  const firstname = data.firstname;
-  const lastname = data.lastname;
+  const firstname = data.firstname?.trim() ?? "";
+  const lastname = data.lastname?.trim() ?? "";
 
   if (!username || !email || !password) {
-    return NextResponse.json({
-      message: "Missing mandatory data"
-    }, {
-      status: 400,
-      headers: corsHeaders
-    })
+    return NextResponse.json(
+      {
+        message: "Username, email, and password are required",
+      },
+      {
+        status: 400,
+        headers: corsHeaders,
+      },
+    );
   }
 
   try {
-    const client = await getClientPromise();
-    const db = client.db("<your-database>");
-    const result = await db.collection("<user-collection>").insertOne({
-      username: username,
-      email: email,
-      password: await bcrypt.hash(password, 10),
-      firstname: firstname,
-      lastname: lastname,
-      status: "ACTIVE"
+    const db = await getDb();
+    const users = db.collection("users");
+    const existingUser = await users.findOne({
+      $or: [{ username }, { email }],
     });
-    return NextResponse.json({
-      id: result.insertedId
-    }, {
-      status: 200,
-      headers: corsHeaders
-    });
-  }
-  catch (exception) {
-    const errorMsg = exception.toString();
-    let displayErrorMsg = "";
-    if (errorMsg.includes("duplicate")) {
-      if (errorMsg.includes("username")) {
-        displayErrorMsg = "Duplicate Username!!"
-      }
-      else if (errorMsg.includes("email")) {
-        displayErrorMsg = "Duplicate Email!!"
-      }
-    }
-    return NextResponse.json({
-      message: displayErrorMsg
-    }, {
-      status: 400,
-      headers: corsHeaders
-    })
-  }
 
+    if (existingUser) {
+      const duplicateField = existingUser.username === username ? "username" : "email";
+
+      return NextResponse.json(
+        {
+          message: `Duplicate ${duplicateField}`,
+        },
+        {
+          status: 409,
+          headers: corsHeaders,
+        },
+      );
+    }
+
+    const role = (await users.countDocuments()) === 0 ? "ADMIN" : "MEMBER";
+    const now = new Date();
+    const document = {
+      username,
+      email,
+      password: await bcrypt.hash(password, 10),
+      firstname,
+      lastname,
+      role,
+      status: "ACTIVE",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const result = await users.insertOne(document);
+
+    return NextResponse.json(
+      {
+        user: sanitizeUser({
+          ...document,
+          _id: result.insertedId,
+        }),
+      },
+      {
+        status: 201,
+        headers: corsHeaders,
+      },
+    );
+  } catch (exception) {
+    if (exception?.code === 11000) {
+      const duplicateField = Object.keys(exception.keyPattern ?? {})[0] ?? "field";
+
+      return NextResponse.json(
+        {
+          message: `Duplicate ${duplicateField}`,
+        },
+        {
+          status: 409,
+          headers: corsHeaders,
+        },
+      );
+    }
+
+    return NextResponse.json(
+      {
+        message: "Internal server error",
+      },
+      {
+        status: 500,
+        headers: corsHeaders,
+      },
+    );
+  }
 }
